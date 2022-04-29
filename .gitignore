@@ -1,0 +1,16 @@
+*.pyc
+.DS_Store
+venv
+venv/
+.venv
+.vscode/settings.json
+
+# folder
+data/
+pages/
+dash-financial-report/
+assets/
+.idea/
+
+# files
+
