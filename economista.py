@@ -2,12 +2,18 @@ from config import *
 
 
 class Economista:
-    def __init__(self, data=""):
+    def __init__(self, data="", simples=False):
         # attributes
         self.data = data
         self.balanco = pd.DataFrame()
         self.dr = pd.DataFrame()
         self.indices = pd.DataFrame()
+        self.id_unique = []
+        self.id_nonunique = []
+        if simples:
+            self.irpj = 1
+        else:
+            self.irpj = 0  # TODO: definir valor para empresa simples
 
         # call methods
         self.compute_balanco()
@@ -22,18 +28,163 @@ class Economista:
         self.capital_terceiros()
         self.debito_longo()
         self.capital_proprio()
-        self.compte_adicional()
+        self.compute_adicional()
 
         pass
 
     def compute_dr(self):
+        # list the entries that have unique code
+        id_list_unique = ["LS", "C", "TR", "IM", "SM", "CT", "CN", "IC", "PI",
+                          "CO", "IS", "SN", "CV", "CI", "PL", "JMRC", "RAF", "ORF",
+                          "DF_01", "GG_21", "GG_22", "DF_02", "PCNPJ", " IN", "GG_19",
+                          "GG_20", "MK_01", "PL", "DL", "VI", "AS", "REB", "RET", "RES",
+                          "DL", "OEO"]
+
+        # list entries that have no unique code
+        id_list_nonunique = ["PE", "GG", "MK", "DF", "IN"]
+
+        # assign to attributes of the class
+        self.id_unique = id_list_unique
+        self.id_nonunique = id_list_nonunique
+
+        # get values for unique list
+        df_unique = self.data[self.data["id"].isin(id_list_unique)]
+        df_nonunique = self.data[self.data["id"].str.contains('|'.join(id_list_nonunique))]
+
+        # sum non unique values and rename them
+        names = ["PE", "GG", "MK", "DF", "IN"]
+        description = ["Pessoal e Encargos", "Gastos Gerais", "Marketing", "Despesas Financeiras",
+                       "Investimentos Totais"]
+
+        # compute receita bruta
+        id_list_rb = ["LS", "C", "TR", "IM", "SM", "CT", "CN"]
+        self.dr = pd.concat([self.dr, df_unique[df_unique["id"].isin(id_list_rb)]])
+        df = self.dr.sum(axis=0).squeeze()
+        df.loc["descricao"] = "Receita Bruta"
+        df.loc["id"] = "DR_RB"
+        df = pd.DataFrame(data=[df.values], columns=df.index)
+        self.dr = pd.concat([self.dr, df])
+
+        # deducao sobre receitas
+        id_list_dsr = ["IC", "PI", "CO", "IS", "SN"]
+        df = df_unique[df_unique["id"].isin(id_list_dsr)]
+        s = df.sum(axis=0).squeeze()
+        s.loc["descricao"] = "Deducao Sobre Receita"
+        s.loc["id"] = "DR_DSR"
+        s = pd.DataFrame(data=[s.values], columns=s.index)
+        self.dr = pd.concat([self.dr, df, s])
+
+        # compute receita liquida
+        df_values = self.dr[self.dr["id"].isin(["DR_RB", "DR_DSR"])].iloc[:, 2:14]
+        df = df_values.iloc[0, :] - df_values.iloc[1, :]
+        df.loc["id"] = "DR_RL"
+        df.loc["descricao"] = "Receita Liquida"
+        df = pd.DataFrame(data=[df.values], columns=df.index)
+        self.dr = pd.concat([self.dr, df])
+
+        # compute custo variavel
+        id_list_cv = ["CV", "CI"]
+        df = df_unique[df_unique["id"].isin(id_list_cv)]
+        s = df.sum(axis=0).squeeze()
+        s.loc["descricao"] = "Custo Variavel"
+        s.loc["id"] = "DR_CV"
+        s = pd.DataFrame(data=[s.values], columns=s.index)
+        self.dr = pd.concat([self.dr, df, s])
+
+        # compute margem de contribuicao
+        df_values = self.dr[self.dr["id"].isin(["DR_RL", "DR_CV"])].iloc[:, 2:14]
+        df = df_values.iloc[0, :] - df_values.iloc[1, :]
+        df.loc["id"] = "DR_MC"
+        df.loc["descricao"] = "Margen de Contribuicao"
+        df = pd.DataFrame(data=[df.values], columns=df.index)
+        self.dr = pd.concat([self.dr, df])
+
+        # Despesa fixa
+        id_list_df_var = ["PE", "GG", "MK", "DF"]
+        id_list_df = ["PL"]
+        df = df_nonunique[df_nonunique["id"].str.contains('|'.join(id_list_df_var))]
+        df = pd.concat([df, df_unique[df_unique["id"].isin(id_list_df)]])
+        s = df.sum(axis=0).squeeze()
+        s.loc["descricao"] = "Despesa Fixa"
+        s.loc["id"] = "DR_DF"
+        s = pd.DataFrame(data=[s.values], columns=s.index)
+        self.dr = pd.concat([self.dr, df, s])
+
+        # Lucro Bruto
+        df_values = self.dr[self.dr["id"].isin(["DR_MC", "DR_DF"])].iloc[:, 2:14]
+        df = df_values.iloc[0, :] - df_values.iloc[1, :]
+        df.loc["id"] = "DR_LB"
+        df.loc["descricao"] = "Lucro Bruto Operacional"
+        df = pd.DataFrame(data=[df.values], columns=df.index)
+        self.dr = pd.concat([self.dr, df])
+
+        # Receitas Financeiras
+        id_list_rf = ['JMRC', 'RAF', 'ORF']
+        df = df_unique[df_unique["id"].isin(id_list_rf)]
+        s = df.sum(axis=0).squeeze()
+        s.loc["descricao"] = "Receitas Financeiras"
+        s.loc["id"] = "DR_RF"
+        s = pd.DataFrame(data=[s.values], columns=s.index)
+        self.dr = pd.concat([self.dr, df, s])
+
+        # Despesas Financeiras
+        id_list_dff = ['DF_01', 'GG_21', 'GG_22', 'DF_02']
+        df = df_unique[df_unique["id"].isin(id_list_dff)]
+        s = df.sum(axis=0).squeeze()
+        s.loc["descricao"] = "Despesas Financeiras"
+        s.loc["id"] = "DR_DFIN"
+        s = pd.DataFrame(data=[s.values], columns=s.index)
+        self.dr = pd.concat([self.dr, df, s])
+
+        # Compute Resultado da Tesouraria
+        id_list_ct = ['VI', 'AS', 'REB', 'RET', 'RES', 'DL', 'OEO']
+        df_ct = df_unique[df_unique["id"].isin(id_list_ct)]
+        s_ct = df_ct.sum(axis=0).squeeze()
+        s_ct.loc["descricao"] = "Resultado de Caixa Tesouraria"
+        s_ct.loc["id"] = "DR_DFIN"
+        s_ct = pd.DataFrame(data=[s_ct.values], columns=s_ct.index)
+
+        # Lucro Bruto antes do IRPJ e CSLL
+        df_values = self.dr[self.dr["id"].isin(["DR_LB", "DR_RF"])].iloc[:, 2:14]
+        df = df_values.iloc[0, :] - df_values.iloc[1, :] + s_ct.iloc[:, 2:14]
+        df = df.squeeze()
+        df["id"] = "DR_LBIC"
+        df["descricao"] = "Lucro Bruto antes do IRPJ e CSLL"
+        df = pd.DataFrame(data=[df.values], columns=df.index)
+        self.dr = pd.concat([self.dr, df])
+
+        # adionar IRPJ/CSS
+        # TODO: Compute simples and add to the dr table
+
+        # Lucro Liquido Final
+        df = self.dr[self.dr["id"] == "DR_LBIC"].loc[2:14] - self.irpj
+        df["id"] = "DR_LLF"
+        df["descricao"] = "Lucro Bruto antes do IRPJ e CSLL"
+        self.dr = pd.concat([self.dr, df])
+
+        # Resultado de Caixa de tesouraria
+        id_list_ctup = ['PCNPJ', 'GG_19', 'GG_20', 'MK_01', 'PL', 'DL']
+        id_list_ctup_var = "IN"
+        df_ctupin = df_nonunique[df_nonunique["id"].str.contains(id_list_ctup_var)]
+        df_ctup = pd.concat([df, df_unique[df_unique["id"].isin(id_list_ctup)]])
+        s_ctup = df_ctup.sum(axis=0).squeeze()
+        self.dr = pd.concat([self.dr, df_ctup, df_ctupin, df_ct, s_ct])
+
+        # Ponto de equilibrio economico
+        df_dr = self.dr[self.dr["id"].str.contains("DR_")]
+        s_mc = df_dr[df_dr["id"] == "DR_MC"].iloc[:, 2:14] / df_dr[df_dr["id"] == "DR_RL"].iloc[:, 2:14]
+        s_pef = df_dr[df_dr["id"] == "DR_DF"].iloc[:, 2:14] / s_mc
+        s_lucro_desejado = self.data[self.data["id"] == "LD"].iloc[:, 2:14]
+        s_pee = pd.concat([df_dr[df_dr["id"] == "DR_DF"].iloc[:, 2:14], s_lucro_desejado]).sum(axis=0)/s_mc
+
+        # TODO: termianr ponto de equilibro de caixa
         pass
 
     def compute_indices(self):
         pass
 
     def capital_de_giro(self):
-        id_list = ["SC", "SB", "SAF", "SCC", "SCR", "SCCR_01", "SCA",
+        id_list = ["SC", "SB", "SAF", "SCR", "SCCR_01", "SCA",
                    "SAAF", "SIR", "VEM"]
 
         self.balanco = self.data[self.data["id"].isin(id_list)]
@@ -70,16 +221,16 @@ class Economista:
         id_list = ["SFM", "SFD_01", "SDDG", "SDAG_01", "SPA_01", "SFA", "SSEP",
                    "SEA_01", "SAC_02"]
         df_ct = self.data[self.data["id"].isin(id_list)]
-        df_ct["pas/ati"] = "passivo"
-        df_ct["tipo"] = "capital de terceiros"
+        df_ct.loc[:, "pas/ati"] = "passivo"
+        df_ct.loc[:, "tipo"] = "capital de terceiros"
 
         # concatenate to the balanco dataframe
         self.balanco = pd.concat([self.balanco, df_ct], ignore_index=True)
         pass
 
     def debito_longo(self):
-        # TODO: 1. modify the velue of debitos futuros. Parec um input ate agora
-        id_list = ["SFM"]  # MODIFICAR'
+        # TODO: 1. modify the velue of debitos futuros. Parece um input ate agora
+        id_list = ["DFLP"]
         df_dl = self.data[self.data["id"].isin(id_list)]  # MODIFICAR
         df_dl["pas/ati"] = "passivo"
         df_dl["tipo"] = "debitos futuros de longo prazo"
@@ -90,15 +241,16 @@ class Economista:
 
     def capital_proprio(self):
         # copute capital proprio
+        id_list = ["CSSB"]
         ativos = self.balanco[self.balanco["pas/ati"] == "ativo"].sum(axis=0)[2:14]
         capital_de_terceiros = self.balanco[(self.balanco["pas/ati"] == "passivo")
                                             & (self.balanco["tipo"] == "capital de terceiros")].sum(axis=0)[2:14]
         debito_longo_prazo = self.balanco[self.balanco["tipo"] == "debitos futuros de longo prazo"].sum(axis=0)[2:14]
-        redultado_exercicio = 1  # TODO: modificar esse valor para valor real da DR
-        capital_social_subscrito = 1  # TODO: modificar esse valor para valor real da DR
+        resultado_exercicio = ativos.replace(ativos.values, 234.29)  # TODO: modificar esse valor para valor real da DR
+        capital_social_subscrito = self.data[self.data["id"].isin(id_list)].iloc[:, 2:14].squeeze()
         capital_proprio = ativos - (capital_de_terceiros
                                     + debito_longo_prazo
-                                    + redultado_exercicio
+                                    + resultado_exercicio
                                     + capital_social_subscrito
                                     )
         # transform in dataframe
@@ -108,11 +260,25 @@ class Economista:
         df_cp["descricao"] = "capital proprio estimado"
         df_cp["id"] = "CPEST"
 
+        # adicione capital social subscrito
+        df_cs = pd.DataFrame(data=[capital_social_subscrito.values], columns=capital_social_subscrito.index)
+        df_cs["pas/ati"] = "passivo"
+        df_cs["tipo"] = "capital proprio"
+        df_cs["descricao"] = "capital social subscrito"
+        df_cs["id"] = "CSSB"
+
+        # add resultado de exercicio
+        df_re = pd.DataFrame(data=[resultado_exercicio.values], columns=resultado_exercicio.index)
+        df_re["pas/ati"] = "passivo"
+        df_re["tipo"] = "capital proprio"
+        df_re["descricao"] = "Resultado do exercicio"
+        df_re["id"] = "RDEE"
+
         # include capital proprio in balanco
-        self.balanco = pd.concat([self.balanco, df_cp])
+        self.balanco = pd.concat([self.balanco, df_cp, df_re, df_cs])
         pass
 
-    def compte_adicional(self):
+    def compute_adicional(self):
         # compute difference active and passive
         ativos = self.balanco[self.balanco["pas/ati"] == "ativo"].sum(axis=0)[2:14]
         passivo = self.balanco[self.balanco["pas/ati"] == "passivo"].sum(axis=0)[2:14]
